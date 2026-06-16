@@ -1000,6 +1000,12 @@
     //
     // Default: 0
     "commit_title_max_length": 0,
+    // What clicking a changed entry in the git panel opens. A secondary
+    // (cmd/ctrl) click always opens the other one.
+    //
+    // Choices: project, single_file
+    // Default: project
+    "click_opens": "project",
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

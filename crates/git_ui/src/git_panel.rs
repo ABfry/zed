@@ -62,7 +62,9 @@ use project::{
 use prompt_store::RULES_FILE_NAMES;
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
+use settings::{
+    GitPanelClickAction, Settings, SettingsStore, StatusStyle, update_settings_file,
+};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -6294,7 +6296,14 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    if event.modifiers().secondary() {
+                    // A plain click opens whatever `click_opens` selects; a
+                    // secondary (cmd/ctrl) click opens the other one.
+                    let action = GitPanelSettings::get_global(cx).click_opens;
+                    let open_single_file = match action {
+                        GitPanelClickAction::SingleFile => !event.modifiers().secondary(),
+                        GitPanelClickAction::Project => event.modifiers().secondary(),
+                    };
+                    if open_single_file {
                         this.open_solo_diff(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
