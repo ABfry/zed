@@ -690,6 +690,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn toggle_window_tab_overview(&self) {}
     fn set_tabbing_identifier(&self, _identifier: Option<String>) {}
 
+    /// Begin an OS-native drag session carrying the given file paths on the
+    /// pasteboard, so the drag can cross window boundaries (e.g. dropping a tab
+    /// onto another Zed window opens the file there). macOS only.
+    #[cfg(target_os = "macos")]
+    fn start_native_file_drag(&self, _paths: Vec<std::path::PathBuf>) {}
+
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;
 

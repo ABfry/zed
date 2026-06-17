@@ -2861,6 +2861,21 @@ impl Pane {
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
+        // File-backed tabs originate a native drag so they can be dropped onto
+        // other Zed windows (which open the file). Tabs without a path on disk
+        // (untitled buffers, terminals, etc.) keep the in-window self-drag.
+        #[cfg(target_os = "macos")]
+        let native_drag_paths: Vec<std::path::PathBuf> = self
+            .project
+            .upgrade()
+            .map(|project| {
+                item.project_paths(cx)
+                    .iter()
+                    .filter_map(|project_path| project.read(cx).absolute_path(project_path, cx))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let read_only_toggle = |toggleable: bool| {
             IconButton::new("toggle_read_only", IconName::FileLock)
                 .size(ButtonSize::None)
@@ -2943,7 +2958,17 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, _, _, cx| cx.new(|_| tab.clone()),
+                {
+                    #[cfg(target_os = "macos")]
+                    let native_drag_paths = native_drag_paths.clone();
+                    move |tab, _, _window, cx| {
+                        #[cfg(target_os = "macos")]
+                        if !native_drag_paths.is_empty() {
+                            _window.start_native_file_drag(native_drag_paths.clone());
+                        }
+                        cx.new(|_| tab.clone())
+                    }
+                },
             )
             .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
                 let mut styled_tab = tab
