@@ -711,6 +711,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 0
     pub commit_title_max_length: Option<usize>,
+
+    /// What clicking a changed entry opens. A secondary (cmd/ctrl) click
+    /// always opens the other one.
+    ///
+    /// Default: project
+    pub click_opens: Option<GitPanelClickAction>,
 }
 
 #[derive(
@@ -732,6 +738,31 @@ pub enum StatusStyle {
     #[default]
     Icon,
     LabelColor,
+}
+
+/// What clicking a changed entry in the Git panel opens. A secondary
+/// (cmd/ctrl) click always opens the other one.
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelClickAction {
+    /// Open the aggregated multi-file project diff.
+    #[default]
+    Project,
+    /// Open a single-file diff in its own tab.
+    SingleFile,
 }
 
 #[with_fallible_options]
