@@ -2311,6 +2311,14 @@ impl Window {
         self.platform_window.start_window_move()
     }
 
+    /// Begin an OS-native drag session carrying the given file paths, so the drag
+    /// can cross window boundaries (e.g. dropping a tab onto another Zed window
+    /// opens the file there). No-op outside macOS.
+    #[cfg(target_os = "macos")]
+    pub fn start_native_file_drag(&self, paths: Vec<std::path::PathBuf>) {
+        self.platform_window.start_native_file_drag(paths)
+    }
+
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
     pub fn set_client_inset(&mut self, inset: Pixels) {
         self.client_inset = Some(inset);

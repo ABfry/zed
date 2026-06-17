@@ -433,6 +433,14 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             conclude_drag_operation as extern "C" fn(&Object, Sel, id),
         );
 
+        // NSDraggingSource: required so the view can originate a native drag
+        // session (used for cross-window tab/file dragging).
+        decl.add_method(
+            sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+            dragging_source_operation_mask
+                as extern "C" fn(&Object, Sel, id, NSInteger) -> NSDragOperation,
+        );
+
         decl.add_method(
             sel!(addTitlebarAccessoryViewController:),
             add_titlebar_accessory_view_controller as extern "C" fn(&Object, Sel, id),
@@ -1809,6 +1817,68 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn start_native_file_drag(&self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        let this = self.0.lock();
+        let view = this.native_view.as_ptr();
+        drop(this);
+
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            // The drag must be initiated from the in-flight mouse event, which
+            // `currentEvent` returns while we are inside event dispatch.
+            let event: id = msg_send![app, currentEvent];
+            if event == nil {
+                return;
+            }
+
+            let pool = NSAutoreleasePool::new(nil);
+
+            // Position the drag image centered on the cursor, in view coordinates.
+            let location_in_window: NSPoint = msg_send![event, locationInWindow];
+            let location_in_view: NSPoint =
+                msg_send![view, convertPoint: location_in_window fromView: nil];
+            let icon_size = 32.0;
+            let frame = NSRect::new(
+                NSPoint::new(
+                    location_in_view.x - icon_size / 2.0,
+                    location_in_view.y - icon_size / 2.0,
+                ),
+                NSSize::new(icon_size, icon_size),
+            );
+
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let items: id = msg_send![class!(NSMutableArray), array];
+            for path in &paths {
+                let ns_path = ns_string(&path.to_string_lossy());
+                // NSURL conforms to NSPasteboardWriting, so it is written to the
+                // drag pasteboard as a `public.file-url` the receiving window reads.
+                let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_path];
+                if url == nil {
+                    continue;
+                }
+                let item: id = msg_send![class!(NSDraggingItem), alloc];
+                let item: id = msg_send![item, initWithPasteboardWriter: url];
+                let icon: id = msg_send![workspace, iconForFile: ns_path];
+                let _: () = msg_send![item, setDraggingFrame: frame contents: icon];
+                let _: () = msg_send![items, addObject: item];
+                let _: () = msg_send![item, release];
+            }
+
+            let count: NSUInteger = msg_send![items, count];
+            if count > 0 {
+                let _: id = msg_send![view,
+                    beginDraggingSessionWithItems: items
+                    event: event
+                    source: view];
+            }
+
+            pool.drain();
+        }
+    }
+
     fn play_system_bell(&self) {
         NSBeep()
     }
@@ -2895,18 +2965,44 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
 }
 
 fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
-    let mut paths = SmallVec::new();
+    let mut paths: SmallVec<[PathBuf; 2]> = SmallVec::new();
     let pasteboard: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
     let filenames = unsafe { NSPasteboard::propertyListForType(pasteboard, NSFilenamesPboardType) };
-    if filenames == nil {
-        return None;
+    if filenames != nil {
+        for file in unsafe { filenames.iter() } {
+            let path = unsafe {
+                let f = NSString::UTF8String(file);
+                CStr::from_ptr(f).to_string_lossy().into_owned()
+            };
+            paths.push(PathBuf::from(path))
+        }
+    } else {
+        // Fall back to file URLs (`public.file-url`). A native drag started via
+        // `start_native_file_drag` writes file URLs rather than the legacy
+        // filenames type, so the receiving window reads them here.
+        unsafe {
+            let url_class: id = msg_send![class!(NSURL), class];
+            let classes: id = msg_send![class!(NSArray), arrayWithObject: url_class];
+            let options: id = msg_send![class!(NSDictionary), dictionary];
+            let urls: id = msg_send![pasteboard, readObjectsForClasses: classes options: options];
+            if urls != nil {
+                for url in urls.iter() {
+                    let path_str: id = msg_send![url, path];
+                    if path_str == nil {
+                        continue;
+                    }
+                    let f = NSString::UTF8String(path_str);
+                    if f.is_null() {
+                        continue;
+                    }
+                    let path = CStr::from_ptr(f).to_string_lossy().into_owned();
+                    paths.push(PathBuf::from(path));
+                }
+            }
+        }
     }
-    for file in unsafe { filenames.iter() } {
-        let path = unsafe {
-            let f = NSString::UTF8String(file);
-            CStr::from_ptr(f).to_string_lossy().into_owned()
-        };
-        paths.push(PathBuf::from(path))
+    if paths.is_empty() {
+        return None;
     }
     Some(ExternalPaths(paths))
 }
@@ -2914,6 +3010,17 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     send_file_drop_event(window_state, FileDropEvent::Exited);
+}
+
+// NSDraggingSource: report that the view-originated drag supports copying, so
+// the OS allows the drag to be dropped onto other windows (and applications).
+extern "C" fn dragging_source_operation_mask(
+    _this: &Object,
+    _: Sel,
+    _session: id,
+    _context: NSInteger,
+) -> NSDragOperation {
+    NSDragOperationCopy
 }
 
 async fn synthetic_drag(
